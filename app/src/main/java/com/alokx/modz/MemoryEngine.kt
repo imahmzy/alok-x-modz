@@ -84,15 +84,22 @@ class MemoryEngine(private val ctx: Context, private val onState: (String) -> Un
         return sb.toString()
     }
 
-    private fun sh(cmd: String): String {
+   private fun sh(cmd: String): String {
         return try {
-            val p = Shizuku.newProcess(arrayOf("sh", "-c", cmd), null, null)
-            val out = p.inputStream.bufferedReader().readText().trim()
-            val err = p.errorStream.bufferedReader().readText().trim()
-            p.waitFor()
+            val clazz = Class.forName("rikka.shizuku.Shizuku")
+            val method = clazz.getDeclaredMethod(
+                "newProcess",
+                Array<String>::class.java,
+                Array<String>::class.java,
+                String::class.java
+            )
+            method.isAccessible = true
+            val proc = method.invoke(null, arrayOf("sh", "-c", cmd), null, null) as Process
+            val out = proc.inputStream.bufferedReader().use { it.readText() }.trim()
+            val err = proc.errorStream.bufferedReader().use { it.readText() }.trim()
+            proc.destroy()
             if (err.isNotEmpty()) "$out | ERR:$err" else out
         } catch (e: Throwable) {
             "ERR ${e.message}"
         }
     }
-}
