@@ -3,6 +3,7 @@ package com.alokx.modz
 import android.content.ComponentName
 import android.content.Context
 import android.content.ServiceConnection
+import android.content.pm.PackageManager
 import android.os.IBinder
 import rikka.shizuku.Shizuku
 
@@ -13,7 +14,7 @@ class MemoryEngine(private val ctx: Context, private val onState: (String) -> Un
 
     private val args = Shizuku.UserServiceArgs(
         ComponentName(ctx.packageName, MemoryService::class.java.name)
-    ).daemon(false).processNameSuffix("mem").debuggable(false).version(1)
+    ).daemon(false).processNameSuffix("mem").debuggable(true).version(1)
 
     private val conn = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName?, binder: IBinder?) {
@@ -58,7 +59,40 @@ class MemoryEngine(private val ctx: Context, private val onState: (String) -> Un
     }
 
     fun status(): String {
-        if (svc == null) return "helper: NULL (not connected)\n"
+        if (svc == null) return "helper: NULL\n"
         return try { svc!!.status() } catch (e: Exception) { "status err: ${e.message}\n" }
+    }
+
+    fun probe(): String {
+        val sb = StringBuilder()
+        sb.append("ping=").append(Shizuku.pingBinder()).append('\n')
+        sb.append("perm=")
+        sb.append(
+            try {
+                if (Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED)
+                    "GRANTED" else "DENIED"
+            } catch (e: Throwable) { "ERR " + e.message }
+        ).append('\n')
+        sb.append("uid=").append(try { Shizuku.getUid() } catch (e: Throwable) { -1 }).append('\n')
+        sb.append(sh("id")).append('\n')
+
+        val script = "P=\$(pidof com.dts.freefireth); echo pid=\$P; " +
+            "wc -l < /proc/\$P/maps 2>&1; " +
+            "A=\$(head -1 /proc/\$P/maps | cut -d- -f1); " +
+            "dd if=/proc/\$P/mem bs=1 skip=\$((0x\$A)) count=16 2>/dev/null | od -An -tx1"
+        sb.append(sh(script)).append('\n')
+        return sb.toString()
+    }
+
+    private fun sh(cmd: String): String {
+        return try {
+            val p = Shizuku.newProcess(arrayOf("sh", "-c", cmd), null, null)
+            val out = p.inputStream.bufferedReader().readText().trim()
+            val err = p.errorStream.bufferedReader().readText().trim()
+            p.waitFor()
+            if (err.isNotEmpty()) "$out | ERR:$err" else out
+        } catch (e: Throwable) {
+            "ERR ${e.message}"
+        }
     }
 }
