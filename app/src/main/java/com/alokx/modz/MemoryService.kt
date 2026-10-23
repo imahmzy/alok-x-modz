@@ -38,10 +38,10 @@ class MemoryService : IMemoryService.Stub() {
         return null
     }
 
-    private fun findModuleBase(p: Int, name: String): Long {
+   private fun findModuleBase(p: Int, name: String): Long {
         if (p < 0) return 0L
         try {
-            File("/proc/$p/maps").forEachLine { line ->
+            for (line in File("/proc/$p/maps").readLines()) {
                 if (line.endsWith("/$name")) return line.substringBefore('-').toLong(16)
             }
         } catch (e: Exception) {}
