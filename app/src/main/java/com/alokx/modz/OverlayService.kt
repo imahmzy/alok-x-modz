@@ -227,7 +227,7 @@ class OverlayService : Service() {
                     panelY = hsy + (e.rawY.toInt() - hy)
                     lp.x = panelX
                     lp.y = panelY
-                    runCatching { wm.updateWindowLayout(col, lp) }
+                   runCatching { wm.updateViewLayout(col, lp) }
                     true
                 }
                 else -> false
