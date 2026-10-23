@@ -10,12 +10,41 @@ class MemoryService : IMemoryService.Stub() {
     private var il2cppBase = 0L
     private var spreadAddr = 0L
     private var spreadOrig: Float? = null
+    private val log = StringBuilder()
+
+    private fun hex(v: Long) = "0x" + java.lang.Long.toHexString(v)
+
+    override fun status(): String = log.toString()
 
     override fun attach(pkg: String): Int {
-        val p = findPid(pkg) ?: return -1
+        log.setLength(0)
+        log.append("attach(").append(pkg).append(")\n")
+
+        val p = findPid(pkg)
+        if (p == null || p < 0) {
+            log.append("pid: NOT FOUND (is FF running?)\n")
+            return -1
+        }
         gamePid = p
-        mem = RandomAccessFile("/proc/$p/mem", "rw")
+        log.append("pid: ").append(p).append('\n')
+
+        try {
+            mem = RandomAccessFile("/proc/$p/mem", "rw")
+            log.append("mem: opened OK\n")
+        } catch (e: Throwable) {
+            log.append("mem OPEN FAILED: ").append(e.message).append('\n')
+            try {
+                mem = RandomAccessFile("/proc/$p/mem", "r")
+                log.append("mem: opened read-only\n")
+            } catch (e2: Throwable) {
+                log.append("mem read-only also failed: ").append(e2.message).append('\n')
+                mem = null
+                return p
+            }
+        }
+
         il2cppBase = findModuleBase(p, Offsets.IL2CPP)
+        log.append("il2cpp: ").append(hex(il2cppBase)).append('\n')
         return p
     }
 
@@ -25,26 +54,40 @@ class MemoryService : IMemoryService.Stub() {
 
     private fun findPid(pkg: String): Int? {
         val procs = File("/proc").listFiles() ?: return null
+        var scanned = 0
         for (d in procs) {
             val first = d.name.firstOrNull() ?: continue
             if (!first.isDigit()) continue
+            scanned++
             val cmd = try {
                 File(d, "cmdline").readText().trim('\u0000')
             } catch (e: Exception) {
                 ""
             }
-            if (cmd == pkg) return d.name.toInt()
+            if (cmd == pkg) {
+                log.append("scanned ").append(scanned).append(" procs\n")
+                return d.name.toInt()
+            }
         }
+        log.append("scanned ").append(scanned).append(" procs, no match\n")
         return null
     }
 
-   private fun findModuleBase(p: Int, name: String): Long {
+    private fun findModuleBase(p: Int, name: String): Long {
         if (p < 0) return 0L
         try {
-            for (line in File("/proc/$p/maps").readLines()) {
-                if (line.endsWith("/$name")) return line.substringBefore('-').toLong(16)
+            val lines = File("/proc/$p/maps").readLines()
+            log.append("maps lines: ").append(lines.size).append('\n')
+            for (line in lines) {
+                if (line.endsWith("/$name")) {
+                    log.append("found ").append(name).append('\n')
+                    return line.substringBefore('-').toLong(16)
+                }
             }
-        } catch (e: Exception) {}
+            log.append(name).append(" NOT in maps\n")
+        } catch (e: Throwable) {
+            log.append("maps read failed: ").append(e.message).append('\n')
+        }
         return 0L
     }
 
@@ -102,22 +145,38 @@ class MemoryService : IMemoryService.Stub() {
     }
 
     override fun snapshot(): FloatArray {
-        if (gamePid < 0 || il2cppBase == 0L || mem == null) return FloatArray(0)
+        log.setLength(0)
+        if (gamePid < 0) { log.append("no pid\n"); return FloatArray(0) }
+        if (mem == null) { log.append("no mem handle\n"); return FloatArray(0) }
+        if (il2cppBase == 0L) { log.append("no il2cpp base\n"); return FloatArray(0) }
+
         return try {
             val cam = rl(il2cppBase + Offsets.STATIC_CAMERA)
+            log.append("cam: ").append(hex(cam)).append('\n')
             if (cam == 0L) return FloatArray(0)
+
             val camT = rl(cam + Offsets.C_TRANSFORM)
+            log.append("camT: ").append(hex(camT)).append('\n')
+            if (camT == 0L) return FloatArray(0)
+
             val camPos = vec3(camT + Offsets.T_POSITION)
             val camRot = quat(camT + Offsets.T_ROTATION)
             val w2c = floats(cam + Offsets.C_WORLD_TO_CAMERA, 16)
             val proj = floats(cam + Offsets.C_PROJECTION, 16)
 
             val gm = rl(il2cppBase + Offsets.STATIC_GAME_FACADE)
+            log.append("gm: ").append(hex(gm)).append('\n')
             if (gm == 0L) return FloatArray(0)
+
             val local = rl(gm + Offsets.GF_LOCAL_PLAYER)
             val list = rl(gm + Offsets.GF_PLAYER_LIST)
             val items = rl(list + Offsets.LIST_ITEMS)
             val count = ri(list + Offsets.LIST_COUNT).coerceIn(0, 128)
+
+            log.append("local: ").append(hex(local)).append('\n')
+            log.append("list: ").append(hex(list)).append('\n')
+            log.append("items: ").append(hex(items)).append('\n')
+            log.append("count: ").append(count).append('\n')
 
             val out = ArrayList<Float>(64 + count * 9)
             w2c.forEach { out.add(it) }
@@ -133,6 +192,10 @@ class MemoryService : IMemoryService.Stub() {
                 if (t == 0L) continue
                 if (ri(p + Offsets.P_IS_DEAD) != 0) continue
                 val pos = vec3(t + Offsets.T_POSITION)
+                if (i == 0) {
+                    log.append("p0 pos: ").append(pos[0]).append(",")
+                        .append(pos[1]).append(",").append(pos[2]).append('\n')
+                }
                 out.add(pos[0]); out.add(pos[1]); out.add(pos[2])
                 out.add(pos[0]); out.add(pos[1] + Offsets.HEAD_HEIGHT); out.add(pos[2])
                 out.add(rf(p + Offsets.P_HEALTH))
@@ -140,7 +203,8 @@ class MemoryService : IMemoryService.Stub() {
                 out.add(if (p == local) 1f else 0f)
             }
             out.toFloatArray()
-        } catch (e: Exception) {
+        } catch (e: Throwable) {
+            log.append("SNAPSHOT ERR: ").append(e.message).append('\n')
             FloatArray(0)
         }
     }
