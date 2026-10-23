@@ -5,7 +5,7 @@ import java.io.RandomAccessFile
 
 class MemoryService : IMemoryService.Stub() {
 
-    private var pid = -1
+    private var gamePid = -1
     private var mem: RandomAccessFile? = null
     private var il2cppBase = 0L
     private var spreadAddr = 0L
@@ -13,15 +13,15 @@ class MemoryService : IMemoryService.Stub() {
 
     override fun attach(pkg: String): Int {
         val p = findPid(pkg) ?: return -1
-        pid = p
+        gamePid = p
         mem = RandomAccessFile("/proc/$p/mem", "rw")
         il2cppBase = findModuleBase(p, Offsets.IL2CPP)
         return p
     }
 
-    override fun getPid(): Int = pid
+    override fun getPid(): Int = gamePid
 
-    override fun getModuleBase(name: String): Long = findModuleBase(pid, name)
+    override fun getModuleBase(name: String): Long = findModuleBase(gamePid, name)
 
     private fun findPid(pkg: String): Int? {
         val procs = File("/proc").listFiles() ?: return null
@@ -30,7 +30,9 @@ class MemoryService : IMemoryService.Stub() {
             if (!first.isDigit()) continue
             val cmd = try {
                 File(d, "cmdline").readText().trim('\u0000')
-            } catch (e: Exception) { continue }
+            } catch (e: Exception) {
+                ""
+            }
             if (cmd == pkg) return d.name.toInt()
         }
         return null
@@ -46,7 +48,6 @@ class MemoryService : IMemoryService.Stub() {
         return 0L
     }
 
-    // little-endian helpers (RandomAccessFile is big-endian)
     private fun rl(a: Long): Long { mem!!.seek(a); return java.lang.Long.reverseBytes(mem!!.readLong()) }
     private fun ri(a: Long): Int { mem!!.seek(a); return java.lang.Integer.reverseBytes(mem!!.readInt()) }
     private fun rf(a: Long): Float = Float.fromBits(ri(a))
@@ -64,7 +65,7 @@ class MemoryService : IMemoryService.Stub() {
     }
 
     private fun localPlayer(): Long {
-        if (pid < 0 || il2cppBase == 0L || mem == null) return 0L
+        if (gamePid < 0 || il2cppBase == 0L || mem == null) return 0L
         val gm = rl(il2cppBase + Offsets.STATIC_GAME_FACADE)
         if (gm == 0L) return 0L
         return rl(gm + Offsets.GF_LOCAL_PLAYER)
@@ -100,13 +101,8 @@ class MemoryService : IMemoryService.Stub() {
         }
     }
 
-    /**
-     * Layout: [0..15] worldToCamera, [16..31] projection, [32..34] camPos,
-     * [35..38] camRot, [39] count, then per player 9 floats:
-     * x,y,z, headX,headY,headZ, health, team, isLocal
-     */
     override fun snapshot(): FloatArray {
-        if (pid < 0 || il2cppBase == 0L || mem == null) return FloatArray(0)
+        if (gamePid < 0 || il2cppBase == 0L || mem == null) return FloatArray(0)
         return try {
             val cam = rl(il2cppBase + Offsets.STATIC_CAMERA)
             if (cam == 0L) return FloatArray(0)
