@@ -21,6 +21,7 @@ class MemoryEngine(private val ctx: Context, private val onState: (String) -> Un
             svc = IMemoryService.Stub.asInterface(binder)
             onState("connected")
         }
+
         override fun onServiceDisconnected(name: ComponentName?) {
             svc = null
             pid = -1
@@ -29,7 +30,10 @@ class MemoryEngine(private val ctx: Context, private val onState: (String) -> Un
     }
 
     fun bind() {
-        if (!Shizuku.pingBinder()) { onState("Shizuku NOT running"); return }
+        if (!Shizuku.pingBinder()) {
+            onState("Shizuku NOT running")
+            return
+        }
         try {
             Shizuku.bindUserService(args, conn)
             onState("binding...")
@@ -39,28 +43,50 @@ class MemoryEngine(private val ctx: Context, private val onState: (String) -> Un
     }
 
     fun unbind() {
-        try { Shizuku.unbindUserService(args, conn, true) } catch (e: Exception) {}
+        try {
+            Shizuku.unbindUserService(args, conn, true)
+        } catch (e: Exception) {
+        }
     }
 
     fun tryAttach(pkg: String) {
         if (pid > 0) return
-        pid = try { svc?.attach(pkg) ?: -1 } catch (e: Exception) { -1 }
+        pid = try {
+            svc?.attach(pkg) ?: -1
+        } catch (e: Exception) {
+            -1
+        }
     }
 
-    fun snapshot(): FloatArray =
-        try { svc?.snapshot() ?: FloatArray(0) } catch (e: Exception) { FloatArray(0) }
+    fun snapshot(): FloatArray {
+        return try {
+            svc?.snapshot() ?: FloatArray(0)
+        } catch (e: Exception) {
+            FloatArray(0)
+        }
+    }
 
     fun setAim(x: Float, y: Float, z: Float, w: Float) {
-        try { svc?.setCameraRotation(x, y, z, w) } catch (e: Exception) {}
+        try {
+            svc?.setCameraRotation(x, y, z, w)
+        } catch (e: Exception) {
+        }
     }
 
     fun setNoSpread(on: Boolean) {
-        try { svc?.setNoSpread(on) } catch (e: Exception) {}
+        try {
+            svc?.setNoSpread(on)
+        } catch (e: Exception) {
+        }
     }
 
     fun status(): String {
-        if (svc == null) return "helper: NULL\n"
-        return try { svc!!.status() } catch (e: Exception) { "status err: ${e.message}\n" }
+        val s = svc ?: return "helper: NULL\n"
+        return try {
+            s.status()
+        } catch (e: Exception) {
+            "status err: ${e.message}\n"
+        }
     }
 
     fun probe(): String {
@@ -69,11 +95,18 @@ class MemoryEngine(private val ctx: Context, private val onState: (String) -> Un
         sb.append("perm=")
         sb.append(
             try {
-                if (Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED)
-                    "GRANTED" else "DENIED"
-            } catch (e: Throwable) { "ERR " + e.message }
+                if (Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED) "GRANTED" else "DENIED"
+            } catch (e: Throwable) {
+                "ERR " + e.message
+            }
         ).append('\n')
-        sb.append("uid=").append(try { Shizuku.getUid() } catch (e: Throwable) { -1 }).append('\n')
+        sb.append("uid=").append(
+            try {
+                Shizuku.getUid()
+            } catch (e: Throwable) {
+                -1
+            }
+        ).append('\n')
         sb.append(sh("id")).append('\n')
 
         val script = "P=\$(pidof com.dts.freefireth); echo pid=\$P; " +
@@ -84,7 +117,7 @@ class MemoryEngine(private val ctx: Context, private val onState: (String) -> Un
         return sb.toString()
     }
 
-   private fun sh(cmd: String): String {
+    private fun sh(cmd: String): String {
         return try {
             val clazz = Class.forName("rikka.shizuku.Shizuku")
             val method = clazz.getDeclaredMethod(
@@ -103,3 +136,4 @@ class MemoryEngine(private val ctx: Context, private val onState: (String) -> Un
             "ERR ${e.message}"
         }
     }
+}
