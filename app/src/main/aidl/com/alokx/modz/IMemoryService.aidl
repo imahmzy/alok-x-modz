@@ -8,4 +8,5 @@ interface IMemoryService {
     float[] snapshot();
     void setCameraRotation(float x, float y, float z, float w);
     void setNoSpread(boolean on);
+    String status();
 }
