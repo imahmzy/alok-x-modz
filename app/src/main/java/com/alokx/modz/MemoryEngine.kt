@@ -18,21 +18,22 @@ class MemoryEngine(private val ctx: Context, private val onState: (String) -> Un
     private val conn = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName?, binder: IBinder?) {
             svc = IMemoryService.Stub.asInterface(binder)
-            onState("helper connected")
+            onState("connected")
         }
         override fun onServiceDisconnected(name: ComponentName?) {
             svc = null
             pid = -1
-            onState("helper disconnected")
+            onState("disconnected")
         }
     }
 
     fun bind() {
-        if (!Shizuku.pingBinder()) { onState("Shizuku not running"); return }
+        if (!Shizuku.pingBinder()) { onState("Shizuku NOT running"); return }
         try {
             Shizuku.bindUserService(args, conn)
+            onState("binding...")
         } catch (e: Exception) {
-            onState("bind failed: ${e.message}")
+            onState("bind FAILED: ${e.message}")
         }
     }
 
@@ -54,5 +55,10 @@ class MemoryEngine(private val ctx: Context, private val onState: (String) -> Un
 
     fun setNoSpread(on: Boolean) {
         try { svc?.setNoSpread(on) } catch (e: Exception) {}
+    }
+
+    fun status(): String {
+        if (svc == null) return "helper: NULL (not connected)\n"
+        return try { svc!!.status() } catch (e: Exception) { "status err: ${e.message}\n" }
     }
 }
