@@ -49,6 +49,8 @@ class OverlayService : Service() {
     private val handler = Handler(Looper.getMainLooper())
 
     private var bindState = "not started"
+    private var probeText = "..."
+    private var tickCount = 0
     private var espOn = true
     private var espBox = true
     private var espHealth = true
