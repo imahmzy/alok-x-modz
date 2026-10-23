@@ -44,14 +44,21 @@ class OverlayService : Service() {
     private var bubble: TextView? = null
     private var panel: LinearLayout? = null
     private var espView: EspView? = null
+    private var debugView: TextView? = null
 
     private val handler = Handler(Looper.getMainLooper())
 
+    private var bindState = "not started"
     private var espOn = true
     private var espBox = true
     private var espHealth = true
     private var noSpread = false
     private var aimlock = false
+
+    private var bubbleX = 24
+    private var bubbleY = 320
+    private var panelX = 24
+    private var panelY = 320
 
     override fun onBind(i: Intent?): IBinder? = null
 
@@ -59,7 +66,7 @@ class OverlayService : Service() {
         super.onCreate()
         startFg()
         wm = getSystemService(WINDOW_SERVICE) as WindowManager
-        engine = MemoryEngine(this) { }
+        engine = MemoryEngine(this) { bindState = it }
         engine.bind()
 
         addEsp()
@@ -77,16 +84,10 @@ class OverlayService : Service() {
         super.onDestroy()
     }
 
-    // ------------------------------------------------------------------
-    // ESP layer: full screen, NEVER receives touch
-    // ------------------------------------------------------------------
+    // ---------------- ESP layer (never touchable) ----------------
 
     private fun addEsp() {
         val v = EspView(this)
-        v.isClickable = false
-        v.isFocusable = false
-        v.isFocusableInTouchMode = false
-
         val lp = WindowManager.LayoutParams(
             WindowManager.LayoutParams.MATCH_PARENT,
             WindowManager.LayoutParams.MATCH_PARENT,
@@ -97,14 +98,11 @@ class OverlayService : Service() {
             PixelFormat.TRANSLUCENT
         )
         lp.gravity = Gravity.TOP or Gravity.START
-
         wm.addView(v, lp)
         espView = v
     }
 
-    // ------------------------------------------------------------------
-    // Bubble: small, touchable, draggable
-    // ------------------------------------------------------------------
+    // ---------------- bubble ----------------
 
     private fun addBubble() {
         val tv = TextView(this).apply {
@@ -124,36 +122,38 @@ class OverlayService : Service() {
             PixelFormat.TRANSLUCENT
         )
         lp.gravity = Gravity.TOP or Gravity.START
-        lp.x = 24
-        lp.y = 320
+        lp.x = bubbleX
+        lp.y = bubbleY
 
-        var downX = 0
-        var downY = 0
-        var startX = 0
-        var startY = 0
+        var dx0 = 0
+        var dy0 = 0
+        var sx = 0
+        var sy = 0
         var moved = false
 
         tv.setOnTouchListener { _, e ->
             when (e.action) {
                 MotionEvent.ACTION_DOWN -> {
-                    downX = e.rawX.toInt()
-                    downY = e.rawY.toInt()
-                    startX = lp.x
-                    startY = lp.y
+                    dx0 = e.rawX.toInt()
+                    dy0 = e.rawY.toInt()
+                    sx = lp.x
+                    sy = lp.y
                     moved = false
                     true
                 }
                 MotionEvent.ACTION_MOVE -> {
-                    val dx = e.rawX.toInt() - downX
-                    val dy = e.rawY.toInt() - downY
+                    val dx = e.rawX.toInt() - dx0
+                    val dy = e.rawY.toInt() - dy0
                     if (abs(dx) > 12 || abs(dy) > 12) moved = true
-                    lp.x = startX + dx
-                    lp.y = startY + dy
+                    lp.x = sx + dx
+                    lp.y = sy + dy
+                    bubbleX = lp.x
+                    bubbleY = lp.y
                     runCatching { wm.updateViewLayout(tv, lp) }
                     true
                 }
                 MotionEvent.ACTION_UP -> {
-                    if (!moved) togglePanel()
+                    if (!moved) openPanel()
                     true
                 }
                 else -> false
@@ -164,30 +164,89 @@ class OverlayService : Service() {
         bubble = tv
     }
 
-    // ------------------------------------------------------------------
-    // Panel: touchable menu
-    // ------------------------------------------------------------------
+    // ---------------- panel (replaces the bubble) ----------------
 
-    private fun togglePanel() {
-        panel?.let {
-            runCatching { wm.removeView(it) }
-            panel = null
-            return
-        }
+    private fun openPanel() {
+        if (panel != null) return
+        panelX = bubbleX
+        panelY = bubbleY
+
+        bubble?.let { runCatching { wm.removeView(it) } }
+        bubble = null
 
         val col = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setBackgroundColor(Color.parseColor("#E60E0E14"))
-            setPadding(30, 26, 30, 26)
+            setPadding(30, 20, 30, 24)
+            minimumWidth = 700
         }
 
-        col.addView(TextView(this).apply {
+        val lp = WindowManager.LayoutParams(
+            WindowManager.LayoutParams.WRAP_CONTENT,
+            WindowManager.LayoutParams.WRAP_CONTENT,
+            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
+            PixelFormat.TRANSLUCENT
+        )
+        lp.gravity = Gravity.TOP or Gravity.START
+        lp.x = panelX
+        lp.y = panelY
+
+        // --- header: title + X, drag this to move the window ---
+        val header = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        val title = TextView(this).apply {
             text = "ALOK X MODZ v1"
             setTextColor(Color.parseColor("#00E5FF"))
-            textSize = 14f
-            setPadding(0, 0, 0, 14)
-        })
+            textSize = 15f
+        }
+        val closeX = TextView(this).apply {
+            text = "  ✕"
+            setTextColor(Color.WHITE)
+            textSize = 17f
+            setOnClickListener { closePanel() }
+        }
+        header.addView(title)
+        header.addView(closeX)
+        col.addView(header)
 
+        var hx = 0
+        var hy = 0
+        var hsx = 0
+        var hsy = 0
+        val drag = View.OnTouchListener { _, e ->
+            when (e.action) {
+                MotionEvent.ACTION_DOWN -> {
+                    hx = e.rawX.toInt()
+                    hy = e.rawY.toInt()
+                    hsx = lp.x
+                    hsy = lp.y
+                    true
+                }
+                MotionEvent.ACTION_MOVE -> {
+                    panelX = hsx + (e.rawX.toInt() - hx)
+                    panelY = hsy + (e.rawY.toInt() - hy)
+                    lp.x = panelX
+                    lp.y = panelY
+                    runCatching { wm.updateWindowLayout(col, lp) }
+                    true
+                }
+                else -> false
+            }
+        }
+        header.setOnTouchListener(drag)
+        title.setOnTouchListener(drag)
+
+        // --- debug readout ---
+        val dbg = TextView(this).apply {
+            setTextColor(Color.parseColor("#7FE7FF"))
+            textSize = 12f
+            setPadding(0, 12, 0, 12)
+            text = "waiting..."
+        }
+        col.addView(dbg)
+        debugView = dbg
+
+        // --- toggles ---
         fun sw(label: String, get: () -> Boolean, set: (Boolean) -> Unit) {
             col.addView(Switch(this).apply {
                 text = label
@@ -206,34 +265,27 @@ class OverlayService : Service() {
         col.addView(Button(this).apply {
             text = "CLOSE MOD"
             setTextColor(Color.parseColor("#FF3B30"))
-            setOnClickListener {
-                runCatching { stopSelf() }
-            }
+            setOnClickListener { runCatching { stopSelf() } }
         })
-
-        val lp = WindowManager.LayoutParams(
-            WindowManager.LayoutParams.WRAP_CONTENT,
-            WindowManager.LayoutParams.WRAP_CONTENT,
-            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
-            PixelFormat.TRANSLUCENT
-        )
-        lp.gravity = Gravity.TOP or Gravity.END
-        lp.x = 24
-        lp.y = 320
 
         wm.addView(col, lp)
         panel = col
     }
 
-    // ------------------------------------------------------------------
-    // Loop
-    // ------------------------------------------------------------------
+    private fun closePanel() {
+        panel?.let { runCatching { wm.removeView(it) } }
+        panel = null
+        debugView = null
+        bubbleX = panelX
+        bubbleY = panelY
+        addBubble()
+    }
+
+    // ---------------- loop ----------------
 
     private fun tick() {
         handler.postDelayed({
             engine.tryAttach(PKG)
-
             espView?.visibility = if (espOn) View.VISIBLE else View.GONE
 
             val snap = engine.snapshot()
@@ -243,6 +295,10 @@ class OverlayService : Service() {
                 it.drawHealth = espHealth
                 it.invalidate()
             }
+
+            debugView?.text =
+                "bind: $bindState\npid: ${engine.pid}\n" + engine.status()
+
             if (aimlock) doAim(snap)
             tick()
         }, 33)
@@ -295,10 +351,6 @@ class OverlayService : Service() {
         }
     }
 }
-
-// ======================================================================
-// ESP drawing layer
-// ======================================================================
 
 class EspView(c: Context) : View(c) {
 
@@ -359,10 +411,6 @@ class EspView(c: Context) : View(c) {
         }
     }
 }
-
-// ======================================================================
-// Math
-// ======================================================================
 
 object Vec {
 
