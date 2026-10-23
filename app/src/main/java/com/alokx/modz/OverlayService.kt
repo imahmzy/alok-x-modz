@@ -298,8 +298,10 @@ class OverlayService : Service() {
                 it.invalidate()
             }
 
-            debugView?.text =
-                "bind: $bindState\npid: ${engine.pid}\n" + engine.status()
+           tickCount++
+            if (tickCount % 30 == 1 && engine.pid <= 0) probeText = engine.probe()
+            debugView?.text = "bind: $bindState\npid: ${engine.pid}\n" +
+                engine.status() + "--probe--\n" + probeText
 
             if (aimlock) doAim(snap)
             tick()
